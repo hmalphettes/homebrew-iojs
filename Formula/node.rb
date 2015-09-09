@@ -1,24 +1,46 @@
-class Iojs < Formula
-  homepage "https://iojs.org/"
-  url "https://iojs.org/dist/v3.3.0/iojs-v3.3.0.tar.xz"
-  sha256 "8b317162af3e0e81b3f5efcda664e5f3525e6e1ab4c21b446db83cf9c4028a32"
+# Note that x.even are stable releases, x.odd are devel releases
+class Node < Formula
+  desc "Platform built on Chrome's JavaScript runtime to build network applications"
+  homepage "https://nodejs.org/"
+  url "https://nodejs.org/dist/v4.0.0/node-v4.0.0.tar.gz"
+  sha256 "e110e5a066f3a6fe565ede7dd66f3727384b9b5c5fbf46f8db723d726e2f5900"
+  head "https://github.com/nodejs/node.git", :branch => "v4.x"
+  revision 1
 
-  conflicts_with "node", :because => "io.js includes a symlink named node for compatibility."
+  bottle do
+    sha256 "15689cc474a79975eaa6d791b24e6fa021494839c9b691ac307d74acefc5f834" => :yosemite
+    sha256 "a7a7d37c6e5088ed3f58b867d4d246851715d3a4f2f3b4b3c40cc7452ff6728c" => :mavericks
+    sha256 "374f3c5b576e4173590b8413e9941df121a84f46bd48161fc758e1f7d42e0402" => :mountain_lion
+  end
 
   option "with-debug", "Build with debugger hooks"
+  option "with-icu4c", "Build with Intl (icu4c) support"
   option "without-npm", "npm will not be installed"
   option "without-completion", "npm bash completion will not be installed"
 
-  depends_on :python => :build
+  deprecated_option "enable-debug" => "with-debug"
+
+  depends_on :python => :build if MacOS.version <= :snow_leopard
+  depends_on "pkg-config" => :build
+  depends_on "icu4c" => :optional
+
+  # https://github.com/nodejs/node-v0.x-archive/issues/7919
+  # https://github.com/Homebrew/homebrew/issues/36681
+  depends_on "icu4c" => :optional
+
+  fails_with :llvm do
+    build 2326
+  end
 
   resource "npm" do
-    url "https://registry.npmjs.org/npm/-/npm-2.13.3.tgz"
-    sha256 "7d6c7c71b42f534c4025a447ae13834fec27ce717a80f9024e874830ece82d6b"
+    url "https://registry.npmjs.org/npm/-/npm-2.14.2.tgz"
+    sha256 "592029e3406cbbaf249135e18212fab91db1601f991f61b4b2a03580311a066e"
   end
 
   def install
     args = %W[--prefix=#{prefix} --without-npm]
     args << "--debug" if build.with? "debug"
+    args << "--with-intl=system-icu" if build.with? "icu4c"
 
     system "./configure", *args
     system "make", "install"
@@ -26,18 +48,12 @@ class Iojs < Formula
     if build.with? "npm"
       resource("npm").stage buildpath/"npm_install"
 
-      # make sure npm can find iojs
+      # make sure npm can find node
       ENV.prepend_path "PATH", bin
-
       # set log level temporarily for npm's `make install`
       ENV["NPM_CONFIG_LOGLEVEL"] = "verbose"
 
       cd buildpath/"npm_install" do
-        # Patch node-gyp until github.com/TooTallNate/node-gyp/pull/564 is resolved
-        # Patch extracted from https://github.com/iojs/io.js/commit/82227f3
-        p = Patch.create(:p1, :DATA)
-        p.path = Pathname.new(__FILE__).expand_path
-        p.apply
         system "./configure", "--prefix=#{libexec}/npm"
         system "make", "install"
       end
@@ -55,7 +71,7 @@ class Iojs < Formula
     node_modules = HOMEBREW_PREFIX/"lib/node_modules"
     node_modules.mkpath
     npm_exec = node_modules/"npm/bin/npm-cli.js"
-    # Kill npm but preserve all other modules across iojs updates/upgrades.
+    # Kill npm but preserve all other modules across node updates/upgrades.
     rm_rf node_modules/"npm"
 
     cp_r libexec/"npm/lib/node_modules/npm", node_modules
@@ -69,9 +85,10 @@ class Iojs < Formula
     # Let's do the manpage dance. It's just a jump to the left.
     # And then a step to the right, with your hand on rm_f.
     ["man1", "man3", "man5", "man7"].each do |man|
+      # Dirs must exist first: https://github.com/Homebrew/homebrew/issues/35969
       mkdir_p HOMEBREW_PREFIX/"share/man/#{man}"
       rm_f Dir[HOMEBREW_PREFIX/"share/man/#{man}/{npm.,npm-,npmrc.}*"]
-      Dir[libexec/"npm/share/man/#{man}/npm*"].each { |f| ln_sf f, HOMEBREW_PREFIX/"share/man/#{man}" }
+      ln_sf Dir[libexec/"npm/lib/node_modules/npm/man/#{man}/npm*"], HOMEBREW_PREFIX/"share/man/#{man}"
     end
 
     npm_root = node_modules/"npm"
@@ -82,26 +99,23 @@ class Iojs < Formula
   def caveats
     s = ""
 
-    if build.with? "npm"
-      s += <<-EOS.undent
-        npm has been installed and updated to latest. To update run
-          npm install -g npm@latest
-
-        You can install global npm packages with
-          npm install -g <package>
-
-        They will install into the global node_modiles directory
-          /usr/local/lib/node_modules
-
-        Do NOT use the npm update command with global modules.
-        The upstream-recommended way to update global modules is:
-          npm install -g <package>@latest
-      EOS
-    else
+    if build.without? "npm"
       s += <<-EOS.undent
         Homebrew has NOT installed npm. If you later install it, you should supplement
         your NODE_PATH with the npm module folder:
           #{HOMEBREW_PREFIX}/lib/node_modules
+      EOS
+    end
+
+    if build.with? "icu4c"
+      s += <<-EOS.undent
+
+        Please note `icu4c` is built with a newer deployment target than Node and
+        this may cause issues in certain usage. Node itself is built against the
+        outdated `libstdc++` target, which is the root cause. For more information see:
+          https://github.com/nodejs/node-v0.x-archive/issues/7919
+
+        If this is an issue for you, do `brew install node --without-icu4c`.
       EOS
     end
 
@@ -112,7 +126,7 @@ class Iojs < Formula
     path = testpath/"test.js"
     path.write "console.log('hello');"
 
-    output = `#{bin}/iojs #{path}`.strip
+    output = `#{bin}/node #{path}`.strip
     assert_equal "hello", output
     assert_equal 0, $?.exitstatus
 
@@ -123,31 +137,6 @@ class Iojs < Formula
       assert (HOMEBREW_PREFIX/"bin/npm").exist?, "npm must exist"
       assert (HOMEBREW_PREFIX/"bin/npm").executable?, "npm must be executable"
       system "#{HOMEBREW_PREFIX}/bin/npm", "--verbose", "install", "npm@latest"
-      system "#{HOMEBREW_PREFIX}/bin/npm", "--verbose", "install", "buffertools"
     end
   end
 end
-
-__END__
-diff --git a/node_modules/node-gyp/lib/install.js b/node_modules/node-gyp/lib/install.js
-index 6f72e6a..ebc4e57 100644
---- a/node_modules/node-gyp/lib/install.js
-+++ b/node_modules/node-gyp/lib/install.js
-@@ -39,7 +39,7 @@ function install (gyp, argv, callback) {
-     }
-   }
-
--  var distUrl = gyp.opts['dist-url'] || gyp.opts.disturl || 'https://nodejs.org/dist'
-+  var distUrl = gyp.opts['dist-url'] || gyp.opts.disturl || 'https://iojs.org/dist'
-
-
-   // Determine which node dev files version we are installing
-@@ -185,7 +185,7 @@ function install (gyp, argv, callback) {
-
-       // now download the node tarball
-       var tarPath = gyp.opts['tarball']
--      var tarballUrl = tarPath ? tarPath : distUrl + '/v' + version + '/node-v' + version + '.tar.gz'
-+      var tarballUrl = tarPath ? tarPath : distUrl + '/v' + version + '/iojs-v' + version + '.tar.gz'
-         , badDownload = false
-         , extractCount = 0
-         , gunzip = zlib.createGunzip()
