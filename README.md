@@ -10,8 +10,9 @@ A Homebrew formula for https://nodejs.org.
 
 Since there is an existing `node` formula in the offical homebrew repository, you have to reference the fully-qualified formula name when interacting with this formula.  e.g.
 ```
-# If node was already installed:
+# If node or iojs was already installed:
 brew remove --force node
+brew remove --force iojs
 brew install hmalphettes/node/node
 ```
 
